@@ -1,25 +1,33 @@
 import {GraphQLServer, PubSub} from "graphql-yoga";
+import Blog from '../mongoose/model';
+import connect from '../mongoose';
+
+connect();
+
 //pubsub을 통해서 data stream 구현
 const pubsub = new PubSub();
 const NEW_CHAT = "NEW_CHAT";
 
+
 let chattingLog = [{
-  id: 0,
+  _id: "id",
   writer: "admin",
-  description: "HELLO"
+  description: "HELLO",
+  roomName:"RoomA"
 }];
 
 const typeDefs = `
   type Chat {
-    id: Int!
+    _id: String!
     writer: String!
     description: String!
+    roomName: String
   }
   type Query {
-    chatting: [Chat]!
+    chatting(roomName:String): [Chat]!
   }
   type Mutation {
-    write(writer: String!, description: String!): String!
+    write(writer: String!, description: String!, roomName: String!): String!
   }
   type Subscription {
     newChat: Chat
@@ -28,29 +36,37 @@ const typeDefs = `
 
 const resolvers = {
   Query: {
-    chatting: () => {
+    chatting: async (_, { roomName }, { Blog }) => {
+      const chattingLog = [];
+      await Blog.find({ roomName }).then(result => {
+        result.forEach(i => {
+          chattingLog.push(i);
+        });
+      });
       return chattingLog;
     }
   },
   Mutation: {
-    write: (_, { writer, description }) => {
-      const id = chattingLog.length;
+    write: async (_, { writer, description, roomName }, { pubsub, Blog }) => {
       const newChat = {
-        id,
         writer,
-        description
+        description,
+        roomName
       };
-    chattingLog.push(newChat);
-    pubsub.publish(NEW_CHAT, {
-      newChat
-    })
-    return "YES";
+      await Blog.create(newChat, (err, blog) => {
+        newChat._id = blog._id; //newChat 객체에 DB _id 추가
+        pubsub.publish(roomName, {
+          newChat
+        });
+      });
+      return "YES";
     }
   },
   Subscription: {
     newChat: {
-      subscribe: (_, __, { pubsub }) =>
-      pubsub.asyncIterator(NEW_CHAT)
+      subscribe: (_, __, { pubsub }) => {
+        return pubsub.asyncIterator(["RoomA", "RoomB"]);
+      }
     }
   }
 };
@@ -58,7 +74,7 @@ const resolvers = {
 const server = new GraphQLServer({
   typeDefs: typeDefs,
   resolvers: resolvers,
-  context: {pubsub}
+  context: {pubsub,Blog}
 });
 
 server.start(() => console.log("Graphql Server Running"));
